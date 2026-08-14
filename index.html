@@ -10,15 +10,15 @@
   <title>地基雷达监测报告生成器</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icon-192.png">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=2.0.0">
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 <div class="app">
   <header class="hero">
-    <span class="pill">Mobile V1 · 本机处理</span>
+    <span class="pill">Mobile V2 · 6h / 24h / 周报 · 本机处理</span>
     <h1>地基雷达监测报告生成器</h1>
-    <p>在 iPhone / iPad / 电脑浏览器中读取雷达平台导出的 Excel，生成 6 小时、24 小时监测报告与 24 小时对比表。</p>
+    <p>在 iPhone / iPad / 电脑浏览器中读取雷达平台导出的 Excel，生成 6 小时、24 小时和一周监测报告，并导出 24 小时/一周 Excel 对比表。</p>
   </header>
 
   <section class="card">
@@ -36,12 +36,13 @@
       </div>
     </div>
     <div class="btn-row"><button class="btn primary" id="loadBtn">加载数据</button></div>
-    <div class="status" id="status">请选择手机“文件”中的两份 .xlsx 数据。所有计算都在当前浏览器内完成。</div>
+    <div class="status" id="status">请选择手机“文件”中的两份 .xlsx 数据。所有数据读取和计算均在当前浏览器中完成。</div>
   </section>
 
   <div class="tabs">
-    <button class="tab-btn active" data-tab="p6">6 小时报告</button>
-    <button class="tab-btn" data-tab="p24">24 小时报告</button>
+    <button class="tab-btn active" data-tab="p6">6 小时</button>
+    <button class="tab-btn" data-tab="p24">24 小时</button>
+    <button class="tab-btn" data-tab="pweek">一周</button>
   </div>
 
   <section class="panel active" id="p6">
@@ -52,7 +53,7 @@
         <div class="field"><label for="e6">结束时间</label><select id="e6"></select></div>
       </div>
       <div class="btn-row"><button class="btn secondary" id="auto6">自动推荐</button><button class="btn primary" id="gen6">生成报告</button></div>
-      <div style="height:12px"></div>
+      <div class="spacer"></div>
       <textarea class="report" id="report6" readonly placeholder="生成后的 6 小时报告显示在这里"></textarea>
       <div class="btn-row">
         <button class="btn green" id="copy6" disabled>复制报告</button>
@@ -80,7 +81,7 @@
         </div>
       </div>
       <div class="btn-row"><button class="btn secondary" id="auto24">自动推荐</button><button class="btn primary" id="gen24">生成报告</button></div>
-      <div style="height:12px"></div>
+      <div class="spacer"></div>
       <textarea class="report" id="report24" readonly placeholder="生成后的 24 小时报告显示在这里"></textarea>
       <div class="btn-row">
         <button class="btn green" id="copy24" disabled>复制报告</button>
@@ -92,9 +93,39 @@
     </div>
   </section>
 
-  <div class="footer">建议首次打开时保持网络连接，使 Excel 组件完成加载。添加到 iPhone 主屏幕后可按 Web App 方式使用。</div>
+  <section class="panel" id="pweek">
+    <div class="card">
+      <h2>2. 一周报告</h2>
+      <div class="period">
+        <h3>本周（7 天）</h3>
+        <div class="time-grid">
+          <div class="field"><label for="sw">开始时间</label><select id="sw"></select></div>
+          <div class="field"><label for="ew">结束时间</label><select id="ew"></select></div>
+        </div>
+      </div>
+      <div class="period">
+        <h3>上周（对比 7 天）</h3>
+        <div class="time-grid">
+          <div class="field"><label for="psw">开始时间</label><select id="psw"></select></div>
+          <div class="field"><label for="pew">结束时间</label><select id="pew"></select></div>
+        </div>
+      </div>
+      <div class="btn-row"><button class="btn secondary" id="autoWeek">自动推荐</button><button class="btn primary" id="genWeek">生成报告</button></div>
+      <div class="spacer"></div>
+      <textarea class="report week-report" id="reportWeek" readonly placeholder="生成后的一周监测报告显示在这里"></textarea>
+      <div class="btn-row">
+        <button class="btn green" id="copyWeek" disabled>复制报告</button>
+        <button class="btn" id="shareWeek" disabled>分享</button>
+        <button class="btn" id="txtWeek" disabled>保存 TXT</button>
+        <button class="btn secondary" id="xlsxWeek" disabled>导出一周 Excel 对比表</button>
+      </div>
+      <div class="helper">自动推荐按“最新数据时刻向前 7 天”选择本周，再取紧邻的前 7 天作为上周；若历史数据不足 14 天，仍可生成本周报告，但不计算周环比。</div>
+    </div>
+  </section>
+
+  <div class="footer">建议首次打开时保持网络连接，使 Excel 组件完成加载。重新部署新版后若主屏幕仍显示旧界面，请先在 Safari 刷新网页一次。</div>
 </div>
 <div class="toast" id="toast"></div>
-<script src="./app.js"></script>
+<script src="./app.js?v=2.0.0"></script>
 </body>
 </html>

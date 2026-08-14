@@ -6,7 +6,7 @@
   "display": "standalone",
   "background_color": "#f4f7fb",
   "theme_color": "#2563eb",
-  "description": "读取地基雷达监测 Excel，生成 6h / 24h 监测报告和对比表。",
+  "description": "读取地基雷达监测 Excel，生成 6h / 24h / 一周监测报告及对比表。",
   "icons": [
     {"src":"./icon-192.png","sizes":"192x192","type":"image/png"},
     {"src":"./icon-512.png","sizes":"512x512","type":"image/png"}
