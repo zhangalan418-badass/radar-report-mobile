@@ -1,157 +1,490 @@
-/* 地基雷达监测报告生成器 Mobile V2
- * 核心计算逻辑由桌面版 Python 迁移：面/点数据读取、6h/24h/一周报告、24h/一周对比表。
- */
-(() => {
-  'use strict';
+/* 地基雷达监测报告生成器 V3
+   逻辑按桌面版 wjz shibao_zhong.py 迁移：
+   短时数据 -> 6h；长时数据 -> 24h/7d；总累积位移从长时数据取值。 */
 
-  const FACE_GROUPS = [
-    ['上部及后缘(全区变形峰值区)', {faceNames:['M6','M7','M8'], faceRange:'M6-M8', pointNames:['S6','S7','S8'], pointRange:'S6-S8'}],
-    ['中部公路边坡', {faceNames:['M1','M2','M3','M4','M5'], faceRange:'M1-M5', pointNames:['S1','S2','S3','S4','S5'], pointRange:'S1-S5'}],
-    ['下部边坡', {faceNames:['M9','M10','M11','M12','M13','M14'], faceRange:'M9-M14', pointNames:['S9','S10','S11','S12','S13','S14'], pointRange:'S9-S14'}]
-  ];
+const GROUPS = [
+  {name:"上部及后缘(全区变形峰值区)", faceNames:["M6","M7","M8"], faceRange:"M6-M8", pointNames:["S6","S7","S8"], pointRange:"S6-S8"},
+  {name:"中部公路边坡", faceNames:["M1","M2","M3","M4","M5"], faceRange:"M1-M5", pointNames:["S1","S2","S3","S4","S5"], pointRange:"S1-S5"},
+  {name:"下部边坡", faceNames:["M9","M10","M11","M12","M13","M14"], faceRange:"M9-M14", pointNames:["S9","S10","S11","S12","S13","S14"]}
+];
 
-  const state = {
-    faceData:new Map(), pointData:new Map(), faceCols:[], pointCols:[], allTimes:[],
-    faceFile:null, pointFile:null, last6:null, last24:null, lastWeek:null,
-    readyTabs:{p6:false,p24:false,pweek:false}
-  };
+const state = {
+  faceShort:null, pointShort:null, faceLong:null, pointLong:null,
+  faceShortCols:null, pointShortCols:null, faceLongCols:null, pointLongCols:null,
+  shortTimes:[], longTimes:[],
+  files:{},
+  last6:null, last24:null, last7:null
+};
 
-  const $ = id => document.getElementById(id);
-  const els = {
-    faceFile:$('faceFile'),pointFile:$('pointFile'),faceMeta:$('faceMeta'),pointMeta:$('pointMeta'),loadBtn:$('loadBtn'),status:$('status'),toast:$('toast'),
-    s6:$('s6'),e6:$('e6'),auto6:$('auto6'),gen6:$('gen6'),report6:$('report6'),copy6:$('copy6'),share6:$('share6'),txt6:$('txt6'),
-    s24:$('s24'),e24:$('e24'),ps24:$('ps24'),pe24:$('pe24'),auto24:$('auto24'),gen24:$('gen24'),report24:$('report24'),copy24:$('copy24'),share24:$('share24'),txt24:$('txt24'),xlsx24:$('xlsx24'),
-    sw:$('sw'),ew:$('ew'),psw:$('psw'),pew:$('pew'),autoWeek:$('autoWeek'),genWeek:$('genWeek'),reportWeek:$('reportWeek'),copyWeek:$('copyWeek'),shareWeek:$('shareWeek'),txtWeek:$('txtWeek'),xlsxWeek:$('xlsxWeek')
-  };
+const $ = id => document.getElementById(id);
 
-  const tabSelects = {
-    p6:[els.s6,els.e6],
-    p24:[els.s24,els.e24,els.ps24,els.pe24],
-    pweek:[els.sw,els.ew,els.psw,els.pew]
-  };
+function toast(msg){
+  const el=$("toast"); el.textContent=msg; el.classList.add("show");
+  clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove("show"),2200);
+}
 
-  function setStatus(msg,type=''){els.status.textContent=msg;els.status.className=`status ${type}`.trim();}
-  function toast(msg){els.toast.textContent=msg;els.toast.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>els.toast.classList.remove('show'),1800);}
-  function pad2(n){return String(n).padStart(2,'0');}
-  function formatDateLocal(d){return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;}
-  function normalizeTime(v){
-    if(v===null||v===undefined||v==='') return null;
-    if(v instanceof Date&&!isNaN(v)) return formatDateLocal(v);
-    if(typeof v==='number'&&globalThis.XLSX?.SSF){const p=XLSX.SSF.parse_date_code(v);if(p)return `${p.y}-${pad2(p.m)}-${pad2(p.d)} ${pad2(p.H)}:${pad2(p.M)}:${pad2(Math.floor(p.S))}`;}
-    let s=String(v).trim();if(!s||s==='X'||s==='Y'||s==='Z'||s.startsWith('='))return null;
-    s=s.replace('T',' ').replace(/\.\d+$/,'');if(/^\d{4}-\d{2}-\d{2} \d{2}$/.test(s))s+=':00:00';if(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s))s+=':00';
-    return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)?s:null;
+function parseTime(s){
+  if(s instanceof Date) return s.getTime();
+  if(typeof s === "number" && Number.isFinite(s)){
+    // Excel serial date.
+    const d = XLSX.SSF.parse_date_code(s);
+    if(d) return new Date(d.y,d.m-1,d.d,d.H||0,d.M||0,Math.floor(d.S||0)).getTime();
   }
-  function parseTime(s){const m=String(s).match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);if(!m)throw new Error(`无法解析时间: ${s}`);return new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]);}
-  function roundHour(d){const x=new Date(d);if(x.getMinutes()>=30)x.setHours(x.getHours()+1);x.setMinutes(0,0,0);return x;}
-  function fmtTitle(d){return formatDateLocal(roundHour(d));}
-  function fmtVal(v){const n=Number(v)||0;return `${n>=0?'+':''}${n.toFixed(1)}`;}
-  function num(v){const n=Number(v);return Number.isFinite(n)?n:0;}
-  function round1(v){return Math.round((v+Number.EPSILON)*10)/10;}
+  const str=String(s??"").trim();
+  let m=str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?$/);
+  if(!m) return NaN;
+  return new Date(+m[1],+m[2]-1,+m[3],+m[4],+(m[5]||0),+(m[6]||0)).getTime();
+}
+function fmtFull(ms){
+  const d=new Date(ms);
+  const p=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function fmtDate(ms){
+  const d=new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function addDays(ms,n){ return ms+n*86400000; }
+function sameDate(ms,dateMs){
+  const a=new Date(ms), b=new Date(dateMs);
+  return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+}
+function roundToHour(ms){
+  const d=new Date(ms);
+  if(d.getMinutes()>=30) d.setHours(d.getHours()+1);
+  d.setMinutes(0,0,0);
+  return d.getTime();
+}
+function to15Hour(ms){
+  const d=new Date(ms); d.setHours(15,0,0,0); return d.getTime();
+}
+function fmtVal(v){
+  const n=Number(v)||0;
+  return n>=0 ? `+${n.toFixed(1)}` : n.toFixed(1);
+}
+function parseNumeric(v){
+  if(v===null || v===undefined || v==="") return 0;
+  if(typeof v==="number") return Number.isFinite(v)?v:0;
+  const n=Number(String(v).replace(/,/g,"").trim());
+  return Number.isFinite(n)?n:0;
+}
 
-  function computeItemDisp(data,s,e,name){const sr=data.get(s),er=data.get(e);if(!sr||!er)return[null,null];const sv=num(sr[name]),ev=num(er[name]);return[ev-sv,ev];}
-  function computeGroupDisp(data,s,e,names){const sr=data.get(s),er=data.get(e);if(!sr||!er)return[null,null,null,null];const arr=names.map(name=>{const sv=num(sr[name]),ev=num(er[name]);return{name,d:ev-sv,total:ev};});if(!arr.length)return[null,null,null,null];const mn=arr.reduce((a,b)=>b.d<a.d?b:a),mx=arr.reduce((a,b)=>b.d>a.d?b:a);return[mn.d,mx.d,mx.name,mx.total];}
-  function groupChangeRange(data,ss,es,ps,pe,names){const vals=[];for(const n of names){const[cur]=computeItemDisp(data,ss,es,n),[prev]=computeItemDisp(data,ps,pe,n);if(cur===null||prev===null)continue;vals.push(cur-prev);}if(!vals.length)return[null,null];return[Math.min(...vals),Math.max(...vals)];}
-  function sortNames(names){return[...names].sort((a,b)=>{const na=+(String(a).match(/\d+/)?.[0]||999),nb=+(String(b).match(/\d+/)?.[0]||999);return na-nb||String(a).localeCompare(String(b));});}
-
-  async function workbookFromFile(file){if(!globalThis.XLSX)throw new Error('Excel 组件未加载。首次打开请保持网络连接后刷新页面。');const buf=await file.arrayBuffer();return XLSX.read(buf,{type:'array',nodim:true,cellDates:false,cellFormula:false});}
-  async function loadRadarFile(file,kind){
-    const wb=await workbookFromFile(file),ws=wb.Sheets['位移'];if(!ws)throw new Error(`${file.name} 中未找到“位移”工作表`);
-    const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null,blankrows:false});if(!rows.length||!rows[0]||rows[0].length<2)throw new Error(`${file.name} 的“位移”工作表未读取到有效列`);
-    const headers=rows[0].slice(1).map(v=>v==null?'':String(v).trim()),cols=headers.filter(Boolean),startIndex=kind==='face'?1:4,data=new Map();
-    for(let r=startIndex;r<rows.length;r++){const row=rows[r]||[],ts=normalizeTime(row[0]);if(!ts)continue;const values={};for(let c=1;c<=headers.length;c++){const name=headers[c-1];if(!name)continue;values[name]=num(row[c]);}data.set(ts,values);}
-    if(!data.size)throw new Error(`${file.name} 中没有识别到位移时间序列`);return{data,cols};
-  }
-  function detectKindByHeader(file){return workbookFromFile(file).then(wb=>{const ws=wb.Sheets['位移'];if(!ws)return null;const a1=ws['A1']?.v==null?'':String(ws['A1'].v);if(a1.includes('监测面'))return'face';if(a1.includes('监测点'))return'point';return null;}).catch(()=>null);}
-
-  function fillSelect(sel,times){const frag=document.createDocumentFragment();for(const t of times){const o=document.createElement('option');o.value=t;o.textContent=t;frag.appendChild(o);}sel.replaceChildren(frag);}
-  function ensureTabSelects(tabId){if(state.readyTabs[tabId]||!state.allTimes.length)return;for(const s of tabSelects[tabId]||[])fillSelect(s,state.allTimes);state.readyTabs[tabId]=true;}
-  function setSel(sel,val){if(val&&state.allTimes.includes(val)){if(!sel.options.length)fillSelect(sel,state.allTimes);sel.value=val;}}
-  function clearSel(sel){if(sel.options.length)sel.selectedIndex=-1;}
-
-  function nearestTime(target,maxGapHours=null){if(!state.allTimes.length)return null;let best=null,bestDiff=Infinity;for(const t of state.allTimes){const diff=Math.abs(parseTime(t)-target);if(diff<bestDiff){best=t;bestDiff=diff;}}if(maxGapHours!==null&&bestDiff>maxGapHours*3600000)return null;return best;}
-  function nearestBefore(target,maxMinutes=90){let best=null,bestDiff=Infinity;for(const t of state.allTimes){const dt=parseTime(t),diff=target-dt;if(diff>=0&&diff<bestDiff){best=t;bestDiff=diff;}}return bestDiff<=maxMinutes*60000?best:null;}
-
-  function auto6(){
-    if(!state.allTimes.length)return;ensureTabSelects('p6');const latest=parseTime(state.allTimes[state.allTimes.length-1]),boundaryHours=[0,6,12,18,24];let endBoundary=null;
-    for(let back=0;back<3&&!endBoundary;back++){const base=new Date(latest);base.setDate(base.getDate()-back);base.setHours(0,0,0,0);for(const h of boundaryHours){const x=new Date(base);x.setHours(h,0,0,0);if(x<=latest&&(!endBoundary||x>endBoundary))endBoundary=x;}}
-    if(!endBoundary)return;const startBoundary=new Date(endBoundary.getTime()-6*3600000);let es=nearestTime(endBoundary,1.5)||nearestBefore(endBoundary,90),ss=nearestTime(startBoundary,1.5)||nearestBefore(startBoundary,90);
-    if(!es||!ss||parseTime(ss)>=parseTime(es)){es=state.allTimes[state.allTimes.length-1];ss=nearestTime(new Date(parseTime(es).getTime()-6*3600000),2)||state.allTimes[0];}
-    setSel(els.s6,ss);setSel(els.e6,es);
-  }
-
-  function auto24(){
-    if(!state.allTimes.length)return;ensureTabSelects('p24');const es=state.allTimes[state.allTimes.length-1],ed=parseTime(es),targetStart=new Date(ed);targetStart.setDate(targetStart.getDate()-1);targetStart.setHours(15,0,0,0);
-    let ss=nearestTime(targetStart,2);if(!ss)ss=nearestTime(new Date(ed.getTime()-24*3600000),3)||state.allTimes[0];setSel(els.s24,ss);setSel(els.e24,es);
-    const curStart=parseTime(ss),duration=parseTime(es)-curStart,pe=nearestTime(new Date(curStart),2),ps=nearestTime(new Date(curStart.getTime()-duration),3);
-    if(ps&&pe&&parseTime(ps)<parseTime(pe)){setSel(els.ps24,ps);setSel(els.pe24,pe);}else{clearSel(els.ps24);clearSel(els.pe24);}
-  }
-
-  function autoWeek(){
-    if(!state.allTimes.length)return;ensureTabSelects('pweek');const end=state.allTimes[state.allTimes.length-1],ed=parseTime(end),start=nearestTime(new Date(ed.getTime()-7*24*3600000),12);
-    if(!start||parseTime(start)>=ed){clearSel(els.sw);setSel(els.ew,end);clearSel(els.psw);clearSel(els.pew);return;}
-    setSel(els.sw,start);setSel(els.ew,end);const prevEnd=start,prevStart=nearestTime(new Date(parseTime(start).getTime()-7*24*3600000),12);
-    if(prevStart&&parseTime(prevStart)<parseTime(prevEnd)){setSel(els.psw,prevStart);setSel(els.pew,prevEnd);}else{clearSel(els.psw);clearSel(els.pew);}
-  }
-
-  function genReportText(ss,es,label){const lines=[`地基雷达${label}小时监测结果（${fmtTitle(parseTime(ss))} 至 ${fmtTitle(parseTime(es))}）`];for(const[gn,gi]of FACE_GROUPS){const[fMin,fMax,fn,ft]=computeGroupDisp(state.faceData,ss,es,gi.faceNames),[pMin,pMax,pn,pt]=computeGroupDisp(state.pointData,ss,es,gi.pointNames);if(fMin===null||pMin===null)continue;lines.push(`- ${gn}：监测面（${gi.faceRange}）${label}小时累积位移${fmtVal(fMin)}~${fmtVal(fMax)}mm，最大值位于${fn}，总累积位移${fmtVal(ft)}mm；监测点（${gi.pointRange}）${label}小时累积位移${fmtVal(pMin)}~${fmtVal(pMax)}mm，最大值位于${pn}，总累积位移${fmtVal(pt)}mm。`);}return lines.length>1?lines.join('\n'):null;}
-
-  function genWeekReportText(ss,es,ps=null,pe=null){
-    const lines=[`地基雷达一周监测结果（${fmtTitle(parseTime(ss))} 至 ${fmtTitle(parseTime(es))}）`],hasPrev=!!(ps&&pe&&parseTime(ps)<parseTime(pe));
-    for(const[gn,gi]of FACE_GROUPS){
-      const[fMin,fMax,fn,ft]=computeGroupDisp(state.faceData,ss,es,gi.faceNames),[pMin,pMax,pn,pt]=computeGroupDisp(state.pointData,ss,es,gi.pointNames);if(fMin===null||pMin===null)continue;
-      let para=`${gn}：监测面（${gi.faceRange}）本周（7天）时段位移${fmtVal(fMin)}~${fmtVal(fMax)}mm，最大值位于${fn}，截至期末总累积位移${fmtVal(ft)}mm；监测点（${gi.pointRange}）本周（7天）时段位移${fmtVal(pMin)}~${fmtVal(pMax)}mm，最大值位于${pn}，截至期末总累积位移${fmtVal(pt)}mm。`;
-      if(hasPrev){const[fcMin,fcMax]=groupChangeRange(state.faceData,ss,es,ps,pe,gi.faceNames),[pcMin,pcMax]=groupChangeRange(state.pointData,ss,es,ps,pe,gi.pointNames);if(fcMin!==null&&pcMin!==null)para+=`与上周相比，监测面位移变化${fmtVal(fcMin)}~${fmtVal(fcMax)}mm，监测点位移变化${fmtVal(pcMin)}~${fmtVal(pcMax)}mm。`;}
-      else para+=' 历史数据不足14天，暂无法计算与上周相比的位移变化。';
-      lines.push(para);
+function timeDisplayFromCell(cell){
+  if(!cell) return "";
+  if(cell.t==="d" && cell.v instanceof Date) return fmtFull(cell.v.getTime());
+  if(typeof cell.v==="number"){
+    const code = cell.z || "";
+    // If formatted like a date/time, use parsed date code; otherwise return number.
+    if(code && /[ymdhHs]/i.test(code)){
+      const d=XLSX.SSF.parse_date_code(cell.v);
+      if(d){
+        const ms=new Date(d.y,d.m-1,d.d,d.H||0,d.M||0,Math.floor(d.S||0)).getTime();
+        return fmtFull(ms);
+      }
     }
-    return lines.length>1?lines.join('\n\n'):null;
   }
+  return String(cell.w ?? cell.v ?? "").trim();
+}
 
-  function validatePeriod(s,e,name='周期'){if(!s||!e){toast(`请选择${name}起止时间`);return false;}if(parseTime(s)>=parseTime(e)){toast(`${name}开始时间必须早于结束时间`);return false;}return true;}
-  function generate6(){if(!state.faceData.size){toast('请先加载数据');return;}const ss=els.s6.value,es=els.e6.value;if(!validatePeriod(ss,es,'6小时'))return;const text=genReportText(ss,es,'6');if(!text){toast('生成报告失败');return;}els.report6.value=text;state.last6={text,ss,es};enableOutputs();toast('6小时报告已生成');}
-  function generate24(){if(!state.faceData.size){toast('请先加载数据');return;}const ss=els.s24.value,es=els.e24.value,ps=els.ps24.value,pe=els.pe24.value;if(!validatePeriod(ss,es,'当前周期'))return;const hasPrev=!!(ps&&pe&&parseTime(ps)<parseTime(pe)),text=genReportText(ss,es,'24');if(!text){toast('生成报告失败');return;}els.report24.value=text;state.last24={text,ss,es,ps,pe,hasPrev};enableOutputs();toast('24小时报告已生成');}
-  function generateWeek(){
-    if(!state.faceData.size){toast('请先加载数据');return;}const ss=els.sw.value,es=els.ew.value,ps=els.psw.value,pe=els.pew.value;if(!validatePeriod(ss,es,'本周'))return;const hasPrev=!!(ps&&pe);if(hasPrev&&parseTime(ps)>=parseTime(pe)){toast('上周开始时间必须早于结束时间');return;}
-    const text=genWeekReportText(ss,es,ps,pe);if(!text){toast('生成一周报告失败');return;}els.reportWeek.value=text;state.lastWeek={text,ss,es,ps,pe,hasPrev};enableOutputs();toast('一周报告已生成');
+async function readWorkbook(file,isPoint){
+  const buf=await file.arrayBuffer();
+  const wb=XLSX.read(buf,{type:"array",cellDates:true,nodim:true});
+  if(!wb.SheetNames.includes("位移")) throw new Error(`${file.name} 中没有“位移”工作表`);
+  const ws=wb.Sheets["位移"];
+  const range=XLSX.utils.decode_range(ws["!ref"]);
+  const headers=[];
+  for(let c=range.s.c;c<=range.e.c;c++){
+    const cell=ws[XLSX.utils.encode_cell({r:range.s.r,c})];
+    const h=cell?.v===null||cell?.v===undefined?null:String(cell.v).trim();
+    headers[c]=h;
   }
+  const colMap={};
+  for(let c=1;c<headers.length;c++) if(headers[c]) colMap[headers[c]]=c;
 
-  function getLast(kind){return kind==='6h'?state.last6:kind==='24h'?state.last24:state.lastWeek;}
-  function reportTitle(kind){return kind==='6h'?'地基雷达6小时监测报告':kind==='24h'?'地基雷达24小时监测报告':'地基雷达一周监测报告';}
-  function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1000);}
-  function downloadText(kind){const x=getLast(kind);if(!x)return;const name=kind==='week'?'一周监测报告.txt':`${kind}_report.txt`;downloadBlob(new Blob([x.text+'\n'],{type:'text/plain;charset=utf-8'}),name);}
-  async function copyText(kind){const x=getLast(kind);if(!x)return;try{await navigator.clipboard.writeText(x.text);toast('报告已复制');}catch{const ta=document.createElement('textarea');ta.value=x.text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('报告已复制');}}
-  async function shareText(kind){const x=getLast(kind);if(!x)return;try{if(navigator.share)await navigator.share({title:reportTitle(kind),text:x.text});else await copyText(kind);}catch(e){if(e?.name!=='AbortError')toast('分享失败，可使用“复制报告”');}}
-
-  function dateLabel(a,b){const ad=parseTime(a),bd=parseTime(b);return`${ad.getMonth()+1}/${ad.getDate()}-${bd.getMonth()+1}/${bd.getDate()}`;}
-  function buildExportAOA(data,cols,ss,es,ps,pe,hasPrev,isFace){const headers=['监测点/面',`${dateLabel(ss,es)}位移量(mm)`];if(hasPrev)headers.push(`相对于${dateLabel(ps,pe)}变化量(mm)`);headers.push('总累积位移量(mm)');const rows=[headers];for(const n of sortNames(cols)){if(isFace&&n==='W1')continue;const[da,ta]=computeItemDisp(data,ss,es,n);if(da===null)continue;const row=[n,round1(da)];if(hasPrev){const[db]=computeItemDisp(data,ps,pe,n);row.push(db===null?'':round1(da-db));}row.push(round1(ta));rows.push(row);}return rows;}
-  function buildWeekExportAOA(data,cols,ss,es,ps,pe,hasPrev,isFace){const headers=['监测点/面','本周（7天）时段位移(mm)'];if(hasPrev)headers.push('上周（7天）时段位移(mm)','与上周相比变化量(mm)');headers.push('截至期末总累积位移(mm)');const rows=[headers];for(const n of sortNames(cols)){if(isFace&&n==='W1')continue;const[cur,total]=computeItemDisp(data,ss,es,n);if(cur===null)continue;const row=[n,round1(cur)];if(hasPrev){const[prev]=computeItemDisp(data,ps,pe,n);row.push(prev===null?'':round1(prev));row.push(prev===null?'':round1(cur-prev));}row.push(round1(total));rows.push(row);}return rows;}
-  function setCols(ws,count){const widths=[14,22,22,22,24];ws['!cols']=widths.slice(0,count).map(wch=>({wch}));}
-  function downloadExcel24(){const x=state.last24;if(!x){toast('请先生成24小时报告');return;}const wb=XLSX.utils.book_new(),a1=buildExportAOA(state.faceData,state.faceCols,x.ss,x.es,x.ps,x.pe,x.hasPrev,true),a2=buildExportAOA(state.pointData,state.pointCols,x.ss,x.es,x.ps,x.pe,x.hasPrev,false),ws1=XLSX.utils.aoa_to_sheet(a1),ws2=XLSX.utils.aoa_to_sheet(a2);setCols(ws1,a1[0].length);setCols(ws2,a2[0].length);XLSX.utils.book_append_sheet(wb,ws1,'面');XLSX.utils.book_append_sheet(wb,ws2,'点');XLSX.writeFileXLSX(wb,'24h对比表.xlsx',{compression:true});}
-  function downloadExcelWeek(){const x=state.lastWeek;if(!x){toast('请先生成一周报告');return;}const wb=XLSX.utils.book_new(),a1=buildWeekExportAOA(state.faceData,state.faceCols,x.ss,x.es,x.ps,x.pe,x.hasPrev,true),a2=buildWeekExportAOA(state.pointData,state.pointCols,x.ss,x.es,x.ps,x.pe,x.hasPrev,false),ws1=XLSX.utils.aoa_to_sheet(a1),ws2=XLSX.utils.aoa_to_sheet(a2);setCols(ws1,a1[0].length);setCols(ws2,a2[0].length);XLSX.utils.book_append_sheet(wb,ws1,'面');XLSX.utils.book_append_sheet(wb,ws2,'点');XLSX.writeFileXLSX(wb,'一周对比表.xlsx',{compression:true});}
-
-  function enableOutputs(){const h6=!!state.last6,h24=!!state.last24,hw=!!state.lastWeek;[els.copy6,els.share6,els.txt6].forEach(b=>b.disabled=!h6);[els.copy24,els.share24,els.txt24,els.xlsx24].forEach(b=>b.disabled=!h24);[els.copyWeek,els.shareWeek,els.txtWeek,els.xlsxWeek].forEach(b=>b.disabled=!hw);}
-  function resetTabs(){state.readyTabs={p6:false,p24:false,pweek:false};for(const arr of Object.values(tabSelects))for(const s of arr)s.replaceChildren();}
-
-  async function loadData(){
-    if(!state.faceFile||!state.pointFile){setStatus('请先选择面数据和点数据两个 Excel 文件。','warn');return;}els.loadBtn.disabled=true;setStatus('正在读取两份 Excel，请稍候…');
-    try{
-      const[fr,pr]=await Promise.all([loadRadarFile(state.faceFile,'face'),loadRadarFile(state.pointFile,'point')]);state.faceData=fr.data;state.faceCols=fr.cols;state.pointData=pr.data;state.pointCols=pr.cols;const pt=new Set(state.pointData.keys());state.allTimes=[...state.faceData.keys()].filter(t=>pt.has(t)).sort((a,b)=>parseTime(a)-parseTime(b));if(!state.allTimes.length)throw new Error('面数据和点数据没有共同时间点');
-      state.last6=state.last24=state.lastWeek=null;els.report6.value='';els.report24.value='';els.reportWeek.value='';resetTabs();enableOutputs();ensureTabSelects('p6');auto6();
-      setStatus(`已加载 ${state.allTimes.length} 个共同时间点\n${state.allTimes[0]}  ～  ${state.allTimes[state.allTimes.length-1]}\n可切换“6 小时 / 24 小时 / 一周”报告。`,'ok');
-    }catch(e){console.error(e);setStatus(`加载失败：${e.message||e}`,'err');}finally{els.loadBtn.disabled=false;}
+  const data={};
+  const startRow=(isPoint?4:1); // zero-based: Python row 5/2
+  for(let r=Math.max(startRow,range.s.r); r<=range.e.r; r++){
+    const timeCell=ws[XLSX.utils.encode_cell({r,c:range.s.c})];
+    const rawTime=timeDisplayFromCell(timeCell);
+    if(!rawTime) continue;
+    const ts=String(rawTime).trim();
+    if(isPoint && (ts==="X"||ts==="Y"||ts==="Z")) continue;
+    const ms=parseTime(ts);
+    if(!Number.isFinite(ms)) continue;
+    const values={};
+    for(const [name,c] of Object.entries(colMap)){
+      const cell=ws[XLSX.utils.encode_cell({r,c})];
+      const v=cell ? cell.v : 0;
+      values[name]=v===null||v===undefined?0:parseNumeric(v);
+    }
+    const canonical=fmtFull(ms);
+    data[canonical]=values;
   }
+  const times=Object.keys(data).sort((a,b)=>parseTime(a)-parseTime(b));
+  return {data, colMap, times};
+}
 
-  function fileMeta(file,kind){return file?`${file.name}\n${(file.size/1024/1024).toFixed(2)} MB · ${kind}`:'未选择文件';}
-  els.faceFile.addEventListener('change',async()=>{state.faceFile=els.faceFile.files[0]||null;els.faceMeta.textContent=fileMeta(state.faceFile,'面数据');if(state.faceFile){const k=await detectKindByHeader(state.faceFile);if(k&&k!=='face')setStatus('当前“面数据”文件看起来是监测点文件，请检查是否选反。','warn');}});
-  els.pointFile.addEventListener('change',async()=>{state.pointFile=els.pointFile.files[0]||null;els.pointMeta.textContent=fileMeta(state.pointFile,'点数据');if(state.pointFile){const k=await detectKindByHeader(state.pointFile);if(k&&k!=='point')setStatus('当前“点数据”文件看起来是监测面文件，请检查是否选反。','warn');}});
+async function loadAllData(){
+  const required=["faceShort","pointShort","faceLong","pointLong"];
+  if(required.some(k=>!state.files[k])){
+    setStatus("请先选择全部 4 个数据文件。","err"); return;
+  }
+  try{
+    setStatus("正在读取 4 个 Excel，请稍候……");
+    const fdS=await readWorkbook(state.files.faceShort,false);
+    const pdS=await readWorkbook(state.files.pointShort,true);
+    const fdL=await readWorkbook(state.files.faceLong,false);
+    const pdL=await readWorkbook(state.files.pointLong,true);
 
-  els.loadBtn.addEventListener('click',loadData);els.auto6.addEventListener('click',auto6);els.gen6.addEventListener('click',generate6);els.auto24.addEventListener('click',auto24);els.gen24.addEventListener('click',generate24);els.autoWeek.addEventListener('click',autoWeek);els.genWeek.addEventListener('click',generateWeek);
-  els.copy6.addEventListener('click',()=>copyText('6h'));els.share6.addEventListener('click',()=>shareText('6h'));els.txt6.addEventListener('click',()=>downloadText('6h'));
-  els.copy24.addEventListener('click',()=>copyText('24h'));els.share24.addEventListener('click',()=>shareText('24h'));els.txt24.addEventListener('click',()=>downloadText('24h'));els.xlsx24.addEventListener('click',downloadExcel24);
-  els.copyWeek.addEventListener('click',()=>copyText('week'));els.shareWeek.addEventListener('click',()=>shareText('week'));els.txtWeek.addEventListener('click',()=>downloadText('week'));els.xlsxWeek.addEventListener('click',downloadExcelWeek);
+    state.faceShort=fdS.data; state.faceShortCols=fdS.colMap; state.shortTimes=fdS.times.filter(t=>pdS.data[t]);
+    state.pointShort=pdS.data; state.pointShortCols=pdS.colMap;
 
-  document.querySelectorAll('.tab-btn').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab-btn').forEach(x=>x.classList.toggle('active',x===btn));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id===btn.dataset.tab));if(state.allTimes.length){const wasReady=state.readyTabs[btn.dataset.tab];ensureTabSelects(btn.dataset.tab);if(!wasReady&&btn.dataset.tab==='p24')auto24();if(!wasReady&&btn.dataset.tab==='pweek')autoWeek();}}));
+    state.faceLong=fdL.data; state.faceLongCols=fdL.colMap; state.longTimes=fdL.times.filter(t=>pdL.data[t]);
+    state.pointLong=pdL.data; state.pointLongCols=pdL.colMap;
 
-  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js?v=2.0.0').catch(()=>{});enableOutputs();
-})();
+    if(!state.shortTimes.length || !state.longTimes.length) throw new Error("短时或长时数据没有共同时间点");
+
+    populateAllSelects();
+    auto6h(); auto24h(); auto7d();
+    $("reportArea").classList.remove("hidden");
+    const ss=state.shortTimes, ls=state.longTimes;
+    setStatus(`加载成功：短时 ${ss.length} 点（${ss[0]} ～ ${ss[ss.length-1]}）；长时 ${ls.length} 点（${ls[0]} ～ ${ls[ls.length-1]}）。`,"ok");
+    toast("全部数据加载成功");
+  }catch(e){
+    console.error(e); setStatus("加载失败：" + e.message,"err");
+  }
+}
+
+function setStatus(msg,cls=""){
+  const el=$("status"); el.textContent=msg; el.className="status "+cls;
+}
+
+function wireFile(id,nameId,key){
+  $(id).addEventListener("change",e=>{
+    const f=e.target.files?.[0];
+    if(f){state.files[key]=f; $(nameId).textContent=f.name;}
+    else {delete state.files[key]; $(nameId).textContent="未选择";}
+  });
+}
+
+function sortedNames(d){
+  return Object.keys(d||{}).sort((a,b)=>{
+    const na=(String(a).match(/\d+/)||["999"])[0];
+    const nb=(String(b).match(/\d+/)||["999"])[0];
+    return (+na)-(+nb);
+  });
+}
+
+function computeItem(data,s,e,name){
+  const sr=data?.[s], er=data?.[e];
+  if(!sr || !er) return [null,null];
+  const sv=parseNumeric(sr[name]), ev=parseNumeric(er[name]);
+  return [ev-sv,ev];
+}
+function computeGroup(data,s,e,names){
+  const sr=data?.[s], er=data?.[e];
+  if(!sr||!er) return [null,null,null,null];
+  const d={};
+  for(const n of names){
+    const sv=parseNumeric(sr[n]), ev=parseNumeric(er[n]);
+    d[n]=[ev-sv,ev];
+  }
+  const keys=Object.keys(d);
+  if(!keys.length) return [null,null,null,null];
+  let mx=keys[0], mn=keys[0];
+  for(const k of keys){ if(d[k][0]>d[mx][0]) mx=k; if(d[k][0]<d[mn][0]) mn=k; }
+  return [d[mn][0],d[mx][0],mx,d[mx][1]];
+}
+function nearestTime(times,targetMs){
+  if(!times.length) return null;
+  let best=times[0], gap=Math.abs(parseTime(best)-targetMs);
+  for(let i=1;i<times.length;i++){
+    const g=Math.abs(parseTime(times[i])-targetMs);
+    if(g<gap){gap=g;best=times[i];}
+  }
+  return best;
+}
+
+function findNearest(times,targetHour,targetMin=0,before=true,targetDateMs=null){
+  let best=null;
+  for(const t of times){
+    const dt=new Date(parseTime(t));
+    if(targetDateMs!==null && !sameDate(parseTime(t),targetDateMs)) continue;
+    if(before && (dt.getHours()>targetHour || (dt.getHours()===targetHour && dt.getMinutes()>targetMin))) continue;
+    if(!before && (dt.getHours()<targetHour || (dt.getHours()===targetHour && dt.getMinutes()<targetMin))) continue;
+    best=t;
+  }
+  return best;
+}
+function nearestTimeFromData(data,timeKey){
+  return nearestTime(Object.keys(data||{}),parseTime(timeKey));
+}
+
+function setSelectOptions(id,times){
+  const el=$(id); el.innerHTML="";
+  for(const t of times){
+    const o=document.createElement("option"); o.value=t; o.textContent=t; el.appendChild(o);
+  }
+}
+function setSelect(id,val){
+  if(val!==null&&val!==undefined&&val!=="") $(id).value=val;
+}
+function getSelect(id){return $(id).value;}
+
+function populateAllSelects(){
+  ["s6","e6"].forEach(id=>setSelectOptions(id,state.shortTimes));
+  ["s24","e24","ps24","pe24","s7","e7","ps7","pe7"].forEach(id=>setSelectOptions(id,state.longTimes));
+}
+
+function auto6h(){
+  if(!state.shortTimes.length) return;
+  const periods=[[0,6],[6,12],[12,18],[18,24]];
+  const last=parseTime(state.shortTimes[state.shortTimes.length-1]);
+  const h=new Date(last).getHours();
+  for(const [sh,eh] of periods){
+    if(sh<=h && h<eh){
+      let es=null;
+      for(let i=state.shortTimes.length-1;i>=0;i--){
+        const dt=new Date(parseTime(state.shortTimes[i]));
+        if(sh<=dt.getHours() && dt.getHours()<eh){es=state.shortTimes[i];break;}
+      }
+      if(es){
+        const ss=findNearest(state.shortTimes,sh,0,true,null);
+        if(ss && parseTime(ss)<parseTime(es)){setSelect("s6",ss);setSelect("e6",es);return;}
+      }
+    }
+  }
+  setSelect("s6",state.shortTimes[0]); setSelect("e6",state.shortTimes[state.shortTimes.length-1]);
+}
+
+function auto24h(){
+  if(!state.longTimes.length) return;
+  const latest=parseTime(state.longTimes[state.longTimes.length-1]);
+  const todayStart=new Date(latest); todayStart.setHours(0,0,0,0);
+  let end=findNearest(state.longTimes,15,0,true,todayStart.getTime());
+  if(!end) end=state.longTimes[state.longTimes.length-1];
+
+  const yesterday=addDays(todayStart.getTime(),-1);
+  let start=findNearest(state.longTimes,15,0,true,yesterday);
+  if(!start) start=state.longTimes[0];
+
+  setSelect("s24",start); setSelect("e24",end);
+
+  const prevDay=addDays(yesterday,-1);
+  let ps=findNearest(state.longTimes,15,0,true,prevDay);
+  if(!ps) ps=state.longTimes[0];
+  setSelect("ps24",ps); setSelect("pe24",start);
+}
+
+function weekday(ms){ return new Date(ms).getDay()===0?6:new Date(ms).getDay()-1; } // Monday=0
+function auto7d(){
+  if(!state.longTimes.length) return;
+  const latest=parseTime(state.longTimes[state.longTimes.length-1]);
+  let found=null;
+  for(let i=0;i<14;i++){
+    const day=addDays(latest,-i);
+    if(weekday(day)===4){ found=day;break; } // Friday
+  }
+  if(found===null) return;
+  const end=findNearest(state.longTimes,15,0,true,found);
+  const startDate=addDays(found,-7);
+  const start=findNearest(state.longTimes,15,0,true,startDate) || state.longTimes[0];
+  const psDate=addDays(startDate,-7);
+  const ps=findNearest(state.longTimes,15,0,true,psDate) || state.longTimes[0];
+  const pe=start;
+  setSelect("s7",start);setSelect("e7",end||state.longTimes[state.longTimes.length-1]);
+  setSelect("ps7",ps);setSelect("pe7",pe);
+}
+
+function getTotalValue(data,timeKey,name){
+  const exact=data?.[timeKey];
+  if(exact) return parseNumeric(exact[name]);
+  const nearest=nearestTimeFromData(data,timeKey);
+  return nearest ? parseNumeric(data[nearest]?.[name]) : 0;
+}
+
+function generateReportText(ss,es,label,dispFace,dispPoint,totalFace,totalPoint,compare=null,displayStart=null,displayEnd=null){
+  const ds=displayStart??ss, de=displayEnd??es;
+  const lines=[`地基雷达${label}监测结果（${ds} 至 ${de}）`];
+  for(const gi of GROUPS){
+    const [fmin,fmax,fn]=computeGroup(dispFace,ss,es,gi.faceNames);
+    const [pmin,pmax,pn]=computeGroup(dispPoint,ss,es,gi.pointNames);
+    if(fmin===null||pmin===null) continue;
+    const ft=getTotalValue(totalFace,es,fn);
+    const pt=getTotalValue(totalPoint,es,pn);
+    let line=`- ${gi.name}：监测面（${gi.faceRange}）${label}时段位移${fmtVal(fmin)}~${fmtVal(fmax)}mm，最大值位于${fn}，截止期末总累积位移${fmtVal(ft)}mm；监测点（${gi.pointRange}）${label}时段位移${fmtVal(pmin)}~${fmtVal(pmax)}mm，最大值位于${pn}，截止期末总累积位移${fmtVal(pt)}mm。`;
+    if(compare){
+      const [ps,pe]=compare;
+      const fdelta={}, pdelta={};
+      for(const n of gi.faceNames){
+        const [a]=computeItem(dispFace,ss,es,n), [b]=computeItem(dispFace,ps,pe,n);
+        if(a!==null&&b!==null) fdelta[n]=a-b;
+      }
+      for(const n of gi.pointNames){
+        const [a]=computeItem(dispPoint,ss,es,n), [b]=computeItem(dispPoint,ps,pe,n);
+        if(a!==null&&b!==null) pdelta[n]=a-b;
+      }
+      const fv=Object.values(fdelta), pv=Object.values(pdelta);
+      if(fv.length){
+        const fminD=Math.min(...fv), fmaxD=Math.max(...fv);
+        if(pv.length){
+          const pminD=Math.min(...pv), pmaxD=Math.max(...pv);
+          line += ` 与上周相比，监测面位移变化${fmtVal(fminD)}~${fmtVal(fmaxD)}mm，监测点位移变化${fmtVal(pminD)}~${fmtVal(pmaxD)}mm。`;
+        }else{
+          line += ` 与上周相比，监测面位移变化${fmtVal(fminD)}~${fmtVal(fmaxD)}mm。`;
+        }
+      }
+    }
+    lines.push(line);
+  }
+  return lines.length>1?lines.join("\n"):null;
+}
+
+function makeWorkbook(ss,es,ps,pe,hasPrev,faceData,pointData,faceCols,pointCols){
+  const sd=new Date(parseTime(ss)), ed=new Date(parseTime(es));
+  const dl=`${sd.getMonth()+1}/${sd.getDate()}-${ed.getMonth()+1}/${ed.getDate()}`;
+  const headers=["监测点/面",`${dl}位移量(mm)`];
+  if(hasPrev){
+    const p1=new Date(parseTime(ps)), p2=new Date(parseTime(pe));
+    headers.push(`相对于${p1.getMonth()+1}/${p1.getDate()}-${p2.getMonth()+1}/${p2.getDate()}变化量(mm)`);
+  }
+  headers.push("总累积位移量(mm)");
+
+  const rowsFace=[headers];
+  for(const n of sortedNames(faceCols)){
+    if(n==="W1") continue;
+    const [da]=computeItem(faceData,ss,es,n); if(da===null) continue;
+    const [db]=hasPrev?computeItem(faceData,ps,pe,n):[null,null];
+    const nearest=nearestTimeFromData(faceData,es);
+    const total=nearest ? computeItem(faceData,Object.keys(faceData).sort((a,b)=>parseTime(a)-parseTime(b))[0],nearest,n)[0] : 0;
+    rowsFace.push([n,round1(da),hasPrev&&db!==null?round1(da-db):"",round1(total)]);
+  }
+  const rowsPoint=[headers];
+  for(const n of sortedNames(pointCols)){
+    const [da]=computeItem(pointData,ss,es,n); if(da===null) continue;
+    const [db]=hasPrev?computeItem(pointData,ps,pe,n):[null,null];
+    const nearest=nearestTimeFromData(pointData,es);
+    const total=nearest ? computeItem(pointData,Object.keys(pointData).sort((a,b)=>parseTime(a)-parseTime(b))[0],nearest,n)[0] : 0;
+    rowsPoint.push([n,round1(da),hasPrev&&db!==null?round1(da-db):"",round1(total)]);
+  }
+  const wb=XLSX.utils.book_new();
+  const ws1=XLSX.utils.aoa_to_sheet(rowsFace);
+  const ws2=XLSX.utils.aoa_to_sheet(rowsPoint);
+  XLSX.utils.book_append_sheet(wb,ws1,"面");
+  XLSX.utils.book_append_sheet(wb,ws2,"点");
+  return wb;
+}
+function round1(v){return Math.round((Number(v)||0)*10)/10;}
+function downloadWorkbook(wb,filename){
+  XLSX.writeFile(wb,filename,{bookType:"xlsx"});
+  toast("Excel 已生成");
+}
+function downloadTxt(text,filename){
+  const blob=new Blob(["\uFEFF"+text+"\n"],{type:"text/plain;charset=utf-8"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000); toast("TXT 已生成");
+}
+async function copyReport(text){
+  try{await navigator.clipboard.writeText(text);toast("报告已复制");}
+  catch{const t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();document.execCommand("copy");t.remove();toast("报告已复制");}
+}
+async function shareReport(text){
+  if(navigator.share){try{await navigator.share({title:"地基雷达监测报告",text});}catch{}}
+  else copyReport(text);
+}
+
+function requireData(kind){
+  if(kind==="6h" && !state.faceShort) {toast("请先加载全部数据"); return false;}
+  if((kind==="24h"||kind==="7d") && !state.faceLong) {toast("请先加载全部数据"); return false;}
+  return true;
+}
+function showResult(id,text,meta){
+  $(id).value=text||"";
+  $(meta).textContent=text?meta:"";
+  if(text) $(id).scrollTop=0;
+}
+function gen6(){
+  if(!requireData("6h")) return;
+  const ss=getSelect("s6"), es=getSelect("e6");
+  if(!ss||!es){toast("请选择起止时间");return;}
+  if(parseTime(ss)>=parseTime(es)){toast("开始时间必须早于结束时间");return;}
+  const text=generateReportText(ss,es,"6小时",state.faceShort,state.pointShort,state.faceLong,state.pointLong,null,fmtFull(roundToHour(parseTime(ss))),fmtFull(roundToHour(parseTime(es))));
+  if(text){showResult("r6",text,"meta6",);$("meta6").textContent=`${fmtFull(roundToHour(parseTime(ss)))} 至 ${fmtFull(roundToHour(parseTime(es)))}`;state.last6={text,ss,es};}
+  else toast("生成6小时报告失败");
+}
+function gen24(){
+  if(!requireData("24h")) return;
+  const ss=getSelect("s24"),es=getSelect("e24"),ps=getSelect("ps24"),pe=getSelect("pe24");
+  if(!ss||!es){toast("请选择当前周期");return;}
+  if(parseTime(ss)>=parseTime(es)){toast("开始时间必须早于结束时间");return;}
+  const hasPrev=!!(ps&&pe);
+  const text=generateReportText(ss,es,"24小时",state.faceLong,state.pointLong,state.faceLong,state.pointLong,hasPrev?[ps,pe]:null,fmtFull(to15Hour(parseTime(ss))),fmtFull(to15Hour(parseTime(es))));
+  if(text){$("r24").value=text;$("meta24").textContent=`${fmtFull(to15Hour(parseTime(ss)))} 至 ${fmtFull(to15Hour(parseTime(es)))}`;state.last24={text,ss,es,ps,pe,hasPrev};}
+  else toast("生成24小时报告失败");
+}
+function gen7(){
+  if(!requireData("7d")) return;
+  const ss=getSelect("s7"),es=getSelect("e7"),ps=getSelect("ps7"),pe=getSelect("pe7");
+  if(!ss||!es){toast("请选择当前周期");return;}
+  if(parseTime(ss)>=parseTime(es)){toast("开始时间必须早于结束时间");return;}
+  const hasPrev=!!(ps&&pe);
+  const text=generateReportText(ss,es,"7天",state.faceLong,state.pointLong,state.faceLong,state.pointLong,hasPrev?[ps,pe]:null,fmtFull(to15Hour(parseTime(ss))),fmtFull(to15Hour(parseTime(es))));
+  if(text){$("r7").value=text;$("meta7").textContent=`${fmtFull(to15Hour(parseTime(ss)))} 至 ${fmtFull(to15Hour(parseTime(es)))}`;state.last7={text,ss,es,ps,pe,hasPrev};}
+  else toast("生成周报失败");
+}
+
+function resetApp(){
+  Object.assign(state,{faceShort:null,pointShort:null,faceLong:null,pointLong:null,faceShortCols:null,pointShortCols:null,faceLongCols:null,pointLongCols:null,shortTimes:[],longTimes:[],files:{},last6:null,last24:null,last7:null});
+  ["faceShort","pointShort","faceLong","pointLong"].forEach(id=>$(id).value="");
+  [["faceShort","faceShortName"],["pointShort","pointShortName"],["faceLong","faceLongName"],["pointLong","pointLongName"]].forEach(([a,b])=>$(b).textContent="未选择");
+  $("reportArea").classList.add("hidden");
+  setStatus("请选择全部 4 个 Excel 文件。");
+  toast("已清空");
+}
+
+document.addEventListener("DOMContentLoaded",()=>{
+  wireFile("faceShort","faceShortName","faceShort");
+  wireFile("pointShort","pointShortName","pointShort");
+  wireFile("faceLong","faceLongName","faceLong");
+  wireFile("pointLong","pointLongName","pointLong");
+  $("loadBtn").onclick=loadAllData;
+  $("resetBtn").onclick=resetApp;
+
+  document.querySelectorAll(".tab").forEach(btn=>{
+    btn.onclick=()=>{
+      document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(x=>x.classList.remove("active"));
+      btn.classList.add("active"); $(`tab${btn.dataset.tab}`).classList.add("active");
+    }
+  });
+  $("auto6").onclick=auto6h; $("gen6").onclick=gen6;
+  $("auto24").onclick=auto24h; $("gen24").onclick=gen24;
+  $("auto7").onclick=auto7d; $("gen7").onclick=gen7;
+
+  $("copy6").onclick=()=>state.last6&&copyReport(state.last6.text);
+  $("share6").onclick=()=>state.last6&&shareReport(state.last6.text);
+  $("txt6").onclick=()=>state.last6&&downloadTxt(state.last6.text,"6h_report.txt");
+
+  $("copy24").onclick=()=>state.last24&&copyReport(state.last24.text);
+  $("share24").onclick=()=>state.last24&&shareReport(state.last24.text);
+  $("txt24").onclick=()=>state.last24&&downloadTxt(state.last24.text,"24h_report.txt");
+  $("xlsx24").onclick=()=>{
+    if(!state.last24){toast("请先生成24小时报告");return;}
+    const x=state.last24;
+    downloadWorkbook(makeWorkbook(x.ss,x.es,x.ps,x.pe,x.hasPrev,state.faceLong,state.pointLong,state.faceLongCols,state.pointLongCols),"24h对比表.xlsx");
+  };
+
+  $("copy7").onclick=()=>state.last7&&copyReport(state.last7.text);
+  $("share7").onclick=()=>state.last7&&shareReport(state.last7.text);
+  $("txt7").onclick=()=>state.last7&&downloadTxt(state.last7.text,"7d_report.txt");
+  $("xlsx7").onclick=()=>{
+    if(!state.last7){toast("请先生成周报");return;}
+    const x=state.last7;
+    downloadWorkbook(makeWorkbook(x.ss,x.es,x.ps,x.pe,x.hasPrev,state.faceLong,state.pointLong,state.faceLongCols,state.pointLongCols),"周报对比表.xlsx");
+  };
+
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("./sw.js").then(()=>{$("swState").textContent="离线缓存已启用";}).catch(()=>{$("swState").textContent="";});
+  }
+});
