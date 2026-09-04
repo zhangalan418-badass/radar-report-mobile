@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#0b84f3">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="雷达报告V3">
+  <meta name="apple-mobile-web-app-title" content="雷达报告V4">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icon-192.png">
-  <title>地基雷达监测报告生成器 V3</title>
+  <title>地基雷达监测报告生成器 V4</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -18,7 +18,7 @@
       <div class="brand-icon">雷</div>
       <div class="brand-text">
         <h1>地基雷达监测报告生成器</h1>
-        <p>V3 · 双数据源 · 6小时 / 24小时 / 周报</p>
+        <p>V4 · 双数据源 · 6小时 / 24小时 / 周报</p>
       </div>
       <button id="resetBtn" class="icon-btn" title="清空已加载数据">↻</button>
     </header>
@@ -111,12 +111,13 @@
       <section id="tab24h" class="tab-panel">
         <div class="card">
           <div class="section-title">② 24 小时报告</div>
+          <div class="hint">V4：日报正文仅输出当前 24 小时结果；下方对比周期仅用于导出 Excel 对比表。</div>
           <div class="sub-title">当前周期</div>
           <div class="time-grid">
             <div><label>开始时间</label><select id="s24"></select></div>
             <div><label>结束时间</label><select id="e24"></select></div>
           </div>
-          <div class="sub-title">对比周期</div>
+          <div class="sub-title">Excel 对比周期（仅用于对比表，不写入 24h 日报正文）</div>
           <div class="time-grid">
             <div><label>开始时间</label><select id="ps24"></select></div>
             <div><label>结束时间</label><select id="pe24"></select></div>
@@ -176,7 +177,7 @@
     </section>
 
     <footer>
-      <span>V3 · 本机浏览器处理</span>
+      <span>V4 · 本机浏览器处理</span>
       <span id="swState"></span>
     </footer>
   </main>

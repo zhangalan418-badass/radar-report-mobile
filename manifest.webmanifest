@@ -1,6 +1,6 @@
 {
-  "name": "地基雷达监测报告生成器 V3",
-  "short_name": "雷达报告V3",
+  "name": "地基雷达监测报告生成器 V4",
+  "short_name": "雷达报告V4",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",

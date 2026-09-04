@@ -1,12 +1,21 @@
-/* 地基雷达监测报告生成器 V3
-   逻辑按桌面版 wjz shibao_zhong.py 迁移：
-   短时数据 -> 6h；长时数据 -> 24h/7d；总累积位移从长时数据取值。 */
+/* 地基雷达监测报告生成器 V4
+   逻辑按桌面版 wjz shibao_zhong.py 修正版迁移：
+   短时数据 -> 6h；长时数据 -> 24h/7d；总累积位移从长时数据取值。
+   V4 修正：24h 正文不再输出周对比；Excel 总累积位移直接取期末累计值；增强时间与字段校验。 */
 
 const GROUPS = [
   {name:"上部及后缘(全区变形峰值区)", faceNames:["M6","M7","M8"], faceRange:"M6-M8", pointNames:["S6","S7","S8"], pointRange:"S6-S8"},
   {name:"中部公路边坡", faceNames:["M1","M2","M3","M4","M5"], faceRange:"M1-M5", pointNames:["S1","S2","S3","S4","S5"], pointRange:"S1-S5"},
   {name:"下部边坡", faceNames:["M9","M10","M11","M12","M13","M14"], faceRange:"M9-M14", pointNames:["S9","S10","S11","S12","S13","S14"]}
 ];
+
+const REQUIRED_FACE_NAMES = [...new Set(GROUPS.flatMap(g=>g.faceNames))];
+const REQUIRED_POINT_NAMES = [...new Set(GROUPS.flatMap(g=>g.pointNames))];
+
+function validateRequiredColumns(colMap, required, label){
+  const missing=required.filter(n=>!(n in (colMap||{})));
+  if(missing.length) throw new Error(`${label}缺少必要列：${missing.join("、")}`);
+}
 
 const state = {
   faceShort:null, pointShort:null, faceLong:null, pointLong:null,
@@ -136,6 +145,11 @@ async function loadAllData(){
     const fdL=await readWorkbook(state.files.faceLong,false);
     const pdL=await readWorkbook(state.files.pointLong,true);
 
+    validateRequiredColumns(fdS.colMap, REQUIRED_FACE_NAMES, "短时面数据");
+    validateRequiredColumns(pdS.colMap, REQUIRED_POINT_NAMES, "短时点数据");
+    validateRequiredColumns(fdL.colMap, REQUIRED_FACE_NAMES, "长时面数据");
+    validateRequiredColumns(pdL.colMap, REQUIRED_POINT_NAMES, "长时点数据");
+
     state.faceShort=fdS.data; state.faceShortCols=fdS.colMap; state.shortTimes=fdS.times.filter(t=>pdS.data[t]);
     state.pointShort=pdS.data; state.pointShortCols=pdS.colMap;
 
@@ -238,25 +252,31 @@ function populateAllSelects(){
 
 function auto6h(){
   if(!state.shortTimes.length) return;
-  const periods=[[0,6],[6,12],[12,18],[18,24]];
-  const last=parseTime(state.shortTimes[state.shortTimes.length-1]);
-  const h=new Date(last).getHours();
-  for(const [sh,eh] of periods){
-    if(sh<=h && h<eh){
-      let es=null;
-      for(let i=state.shortTimes.length-1;i>=0;i--){
-        const dt=new Date(parseTime(state.shortTimes[i]));
-        if(sh<=dt.getHours() && dt.getHours()<eh){es=state.shortTimes[i];break;}
-      }
-      if(es){
-        const ss=findNearest(state.shortTimes,sh,0,true,null);
-        if(ss && parseTime(ss)<parseTime(es)){setSelect("s6",ss);setSelect("e6",es);return;}
-      }
+  const latestMs=parseTime(state.shortTimes[state.shortTimes.length-1]);
+  const latest=new Date(latestMs);
+  const sh=Math.floor(latest.getHours()/6)*6;
+  const currentStart=new Date(latestMs);
+  currentStart.setHours(sh,0,0,0);
+
+  // V4：按真实 6 小时时间桶向前搜索，避免 V3 因只比较“小时数”而跨日期误选开始节点。
+  for(let back=0; back<8; back++){
+    const startMs=currentStart.getTime()-back*6*3600000;
+    const endMs=startMs+6*3600000;
+    const bucket=state.shortTimes.filter(t=>{
+      const ms=parseTime(t);
+      return ms>=startMs && ms<endMs && (back>0 || ms<=latestMs);
+    });
+    if(bucket.length>=2){
+      setSelect("s6",bucket[0]);
+      setSelect("e6",bucket[bucket.length-1]);
+      return;
     }
   }
-  setSelect("s6",state.shortTimes[0]); setSelect("e6",state.shortTimes[state.shortTimes.length-1]);
-}
 
+  // 极端缺数时仍给出可用范围，由用户手动调整。
+  setSelect("s6",state.shortTimes[0]);
+  setSelect("e6",state.shortTimes[state.shortTimes.length-1]);
+}
 function auto24h(){
   if(!state.longTimes.length) return;
   const latest=parseTime(state.longTimes[state.longTimes.length-1]);
@@ -303,7 +323,7 @@ function getTotalValue(data,timeKey,name){
   return nearest ? parseNumeric(data[nearest]?.[name]) : 0;
 }
 
-function generateReportText(ss,es,label,dispFace,dispPoint,totalFace,totalPoint,compare=null,displayStart=null,displayEnd=null){
+function generateReportText(ss,es,label,dispFace,dispPoint,totalFace,totalPoint,compare=null,displayStart=null,displayEnd=null,compareLabel="与上周相比"){
   const ds=displayStart??ss, de=displayEnd??es;
   const lines=[`地基雷达${label}监测结果（${ds} 至 ${de}）`];
   for(const gi of GROUPS){
@@ -329,9 +349,9 @@ function generateReportText(ss,es,label,dispFace,dispPoint,totalFace,totalPoint,
         const fminD=Math.min(...fv), fmaxD=Math.max(...fv);
         if(pv.length){
           const pminD=Math.min(...pv), pmaxD=Math.max(...pv);
-          line += ` 与上周相比，监测面位移变化${fmtVal(fminD)}~${fmtVal(fmaxD)}mm，监测点位移变化${fmtVal(pminD)}~${fmtVal(pmaxD)}mm。`;
+          line += ` ${compareLabel}，监测面位移变化${fmtVal(fminD)}~${fmtVal(fmaxD)}mm，监测点位移变化${fmtVal(pminD)}~${fmtVal(pmaxD)}mm。`;
         }else{
-          line += ` 与上周相比，监测面位移变化${fmtVal(fminD)}~${fmtVal(fmaxD)}mm。`;
+          line += ` ${compareLabel}，监测面位移变化${fmtVal(fminD)}~${fmtVal(fmaxD)}mm。`;
         }
       }
     }
@@ -356,16 +376,22 @@ function makeWorkbook(ss,es,ps,pe,hasPrev,faceData,pointData,faceCols,pointCols)
     const [da]=computeItem(faceData,ss,es,n); if(da===null) continue;
     const [db]=hasPrev?computeItem(faceData,ps,pe,n):[null,null];
     const nearest=nearestTimeFromData(faceData,es);
-    const total=nearest ? computeItem(faceData,Object.keys(faceData).sort((a,b)=>parseTime(a)-parseTime(b))[0],nearest,n)[0] : 0;
-    rowsFace.push([n,round1(da),hasPrev&&db!==null?round1(da-db):"",round1(total)]);
+    const total=nearest ? parseNumeric(faceData[nearest]?.[n]) : 0;
+    const row=[n,round1(da)];
+    if(hasPrev) row.push(db!==null?round1(da-db):"");
+    row.push(round1(total));
+    rowsFace.push(row);
   }
   const rowsPoint=[headers];
   for(const n of sortedNames(pointCols)){
     const [da]=computeItem(pointData,ss,es,n); if(da===null) continue;
     const [db]=hasPrev?computeItem(pointData,ps,pe,n):[null,null];
     const nearest=nearestTimeFromData(pointData,es);
-    const total=nearest ? computeItem(pointData,Object.keys(pointData).sort((a,b)=>parseTime(a)-parseTime(b))[0],nearest,n)[0] : 0;
-    rowsPoint.push([n,round1(da),hasPrev&&db!==null?round1(da-db):"",round1(total)]);
+    const total=nearest ? parseNumeric(pointData[nearest]?.[n]) : 0;
+    const row=[n,round1(da)];
+    if(hasPrev) row.push(db!==null?round1(da-db):"");
+    row.push(round1(total));
+    rowsPoint.push(row);
   }
   const wb=XLSX.utils.book_new();
   const ws1=XLSX.utils.aoa_to_sheet(rowsFace);
@@ -418,8 +444,10 @@ function gen24(){
   const ss=getSelect("s24"),es=getSelect("e24"),ps=getSelect("ps24"),pe=getSelect("pe24");
   if(!ss||!es){toast("请选择当前周期");return;}
   if(parseTime(ss)>=parseTime(es)){toast("开始时间必须早于结束时间");return;}
-  const hasPrev=!!(ps&&pe);
-  const text=generateReportText(ss,es,"24小时",state.faceLong,state.pointLong,state.faceLong,state.pointLong,hasPrev?[ps,pe]:null,fmtFull(to15Hour(parseTime(ss))),fmtFull(to15Hour(parseTime(es))));
+  const hasPrev=!!(ps&&pe&&parseTime(ps)<parseTime(pe));
+  // V4：24 小时日报正文只报告当前 24h，不输出任何“与上周相比”文字。
+  // 对比周期仍保留，仅供“24h Excel 对比表”导出使用。
+  const text=generateReportText(ss,es,"24小时",state.faceLong,state.pointLong,state.faceLong,state.pointLong,null,fmtFull(to15Hour(parseTime(ss))),fmtFull(to15Hour(parseTime(es))));
   if(text){$("r24").value=text;$("meta24").textContent=`${fmtFull(to15Hour(parseTime(ss)))} 至 ${fmtFull(to15Hour(parseTime(es)))}`;state.last24={text,ss,es,ps,pe,hasPrev};}
   else toast("生成24小时报告失败");
 }
@@ -428,8 +456,8 @@ function gen7(){
   const ss=getSelect("s7"),es=getSelect("e7"),ps=getSelect("ps7"),pe=getSelect("pe7");
   if(!ss||!es){toast("请选择当前周期");return;}
   if(parseTime(ss)>=parseTime(es)){toast("开始时间必须早于结束时间");return;}
-  const hasPrev=!!(ps&&pe);
-  const text=generateReportText(ss,es,"7天",state.faceLong,state.pointLong,state.faceLong,state.pointLong,hasPrev?[ps,pe]:null,fmtFull(to15Hour(parseTime(ss))),fmtFull(to15Hour(parseTime(es))));
+  const hasPrev=!!(ps&&pe&&parseTime(ps)<parseTime(pe));
+  const text=generateReportText(ss,es,"7天",state.faceLong,state.pointLong,state.faceLong,state.pointLong,hasPrev?[ps,pe]:null,fmtFull(to15Hour(parseTime(ss))),fmtFull(to15Hour(parseTime(es))),"与上周相比");
   if(text){$("r7").value=text;$("meta7").textContent=`${fmtFull(to15Hour(parseTime(ss)))} 至 ${fmtFull(to15Hour(parseTime(es)))}`;state.last7={text,ss,es,ps,pe,hasPrev};}
   else toast("生成周报失败");
 }
