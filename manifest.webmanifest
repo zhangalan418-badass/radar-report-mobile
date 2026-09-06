@@ -1,14 +1,14 @@
 {
-  "name": "地基雷达监测报告生成器 V4",
-  "short_name": "雷达报告V4",
-  "start_url": "./",
+  "name": "地基雷达监测报告生成器",
+  "short_name": "雷达报告",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",
-  "theme_color": "#0b84f3",
-  "orientation": "portrait",
-  "scope": "./",
+  "theme_color": "#2563eb",
+  "description": "读取地基雷达监测 Excel，生成 6h / 24h / 一周监测报告及对比表。",
   "icons": [
-    {"src":"./icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
-    {"src":"./icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+    {"src":"./icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"./icon-512.png","sizes":"512x512","type":"image/png"}
   ]
 }
