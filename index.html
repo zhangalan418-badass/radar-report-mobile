@@ -2,130 +2,192 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#2563eb">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#0b84f3">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="雷达报告">
-  <title>地基雷达监测报告生成器</title>
-  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="雷达报告V4.2">
+  <link rel="manifest" href="./manifest-v4.2.webmanifest">
   <link rel="apple-touch-icon" href="./icon-192.png">
-  <link rel="stylesheet" href="./styles.css?v=2.0.0">
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <title>地基雷达监测报告生成器 V4.2</title>
+  <link rel="stylesheet" href="./styles-v4.2.css">
 </head>
 <body>
-<div class="app">
-  <header class="hero">
-    <span class="pill">Mobile V2 · 6h / 24h / 周报 · 本机处理</span>
-    <h1>地基雷达监测报告生成器</h1>
-    <p>在 iPhone / iPad / 电脑浏览器中读取雷达平台导出的 Excel，生成 6 小时、24 小时和一周监测报告，并导出 24 小时/一周 Excel 对比表。</p>
-  </header>
-
-  <section class="card">
-    <h2>1. 选择数据文件</h2>
-    <div class="file-grid">
-      <div class="file-box">
-        <label for="faceFile">面数据（M1–M15）</label>
-        <input class="file-input" id="faceFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-        <div class="file-meta" id="faceMeta">未选择文件</div>
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="brand-icon">雷</div>
+      <div class="brand-text">
+        <h1>地基雷达监测报告生成器</h1>
+        <p>V4.2 · 双数据源 · 6小时 / 24小时 / 周报</p>
       </div>
-      <div class="file-box">
-        <label for="pointFile">点数据（S1–S15）</label>
-        <input class="file-input" id="pointFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-        <div class="file-meta" id="pointMeta">未选择文件</div>
-      </div>
-    </div>
-    <div class="btn-row"><button class="btn primary" id="loadBtn">加载数据</button></div>
-    <div class="status" id="status">请选择手机“文件”中的两份 .xlsx 数据。所有数据读取和计算均在当前浏览器中完成。</div>
-  </section>
+      <button id="resetBtn" class="icon-btn" title="清空已加载数据">↻</button>
+    </header>
 
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="p6">6 小时</button>
-    <button class="tab-btn" data-tab="p24">24 小时</button>
-    <button class="tab-btn" data-tab="pweek">一周</button>
-  </div>
+    <section class="notice">
+      <strong>数据处理方式：</strong>短时数据（小时级）用于 6 小时报告；长时数据（日级）用于 24 小时和周报。Excel 在本机浏览器中处理。
+    </section>
 
-  <section class="panel active" id="p6">
-    <div class="card">
-      <h2>2. 6 小时报告</h2>
-      <div class="time-grid">
-        <div class="field"><label for="s6">开始时间</label><select id="s6"></select></div>
-        <div class="field"><label for="e6">结束时间</label><select id="e6"></select></div>
-      </div>
-      <div class="btn-row"><button class="btn secondary" id="auto6">自动推荐</button><button class="btn primary" id="gen6">生成报告</button></div>
-      <div class="spacer"></div>
-      <textarea class="report" id="report6" readonly placeholder="生成后的 6 小时报告显示在这里"></textarea>
-      <div class="btn-row">
-        <button class="btn green" id="copy6" disabled>复制报告</button>
-        <button class="btn" id="share6" disabled>分享</button>
-        <button class="btn" id="txt6" disabled>保存 TXT</button>
-      </div>
-    </div>
-  </section>
+    <section class="card">
+      <div class="section-title">① 数据文件</div>
 
-  <section class="panel" id="p24">
-    <div class="card">
-      <h2>2. 24 小时报告</h2>
-      <div class="period">
-        <h3>当前周期</h3>
-        <div class="time-grid">
-          <div class="field"><label for="s24">开始时间</label><select id="s24"></select></div>
-          <div class="field"><label for="e24">结束时间</label><select id="e24"></select></div>
+      <div class="file-group">
+        <div class="group-label">短时数据（小时级）</div>
+        <label class="file-row">
+          <span class="file-label">短时面</span>
+          <input id="faceShort" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <span id="faceShortName" class="file-name">未选择</span>
+          <span class="choose-btn">选择</span>
+        </label>
+        <label class="file-row">
+          <span class="file-label">短时点</span>
+          <input id="pointShort" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <span id="pointShortName" class="file-name">未选择</span>
+          <span class="choose-btn">选择</span>
+        </label>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="file-group">
+        <div class="group-label">长时数据（日级）</div>
+        <label class="file-row">
+          <span class="file-label">长时面</span>
+          <input id="faceLong" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <span id="faceLongName" class="file-name">未选择</span>
+          <span class="choose-btn">选择</span>
+        </label>
+        <label class="file-row">
+          <span class="file-label">长时点</span>
+          <input id="pointLong" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <span id="pointLongName" class="file-name">未选择</span>
+          <span class="choose-btn">选择</span>
+        </label>
+      </div>
+
+      <button id="loadBtn" class="primary-btn wide">加载全部数据</button>
+      <div id="status" class="status">请选择全部 4 个 Excel 文件。</div>
+    </section>
+
+    <section id="reportArea" class="hidden">
+      <div class="tabs">
+        <button class="tab active" data-tab="6h">6小时</button>
+        <button class="tab" data-tab="24h">24小时</button>
+        <button class="tab" data-tab="7d">周报</button>
+      </div>
+
+      <section id="tab6h" class="tab-panel active">
+        <div class="card">
+          <div class="section-title">② 6 小时报告</div>
+          <div class="hint">使用短时数据计算时段位移，长时数据提供截止期末总累积位移。</div>
+          <div class="time-grid">
+            <div>
+              <label>开始时间</label>
+              <select id="s6"></select>
+            </div>
+            <div>
+              <label>结束时间</label>
+              <select id="e6"></select>
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="auto6" class="secondary-btn">自动推荐</button>
+            <button id="gen6" class="primary-btn">生成报告</button>
+          </div>
         </div>
-      </div>
-      <div class="period">
-        <h3>对比周期</h3>
-        <div class="time-grid">
-          <div class="field"><label for="ps24">开始时间</label><select id="ps24"></select></div>
-          <div class="field"><label for="pe24">结束时间</label><select id="pe24"></select></div>
+        <div class="card result-card">
+          <div class="result-head">
+            <span>报告结果</span>
+            <span id="meta6" class="meta"></span>
+          </div>
+          <textarea id="r6" class="report-text" readonly placeholder="生成后将在这里显示报告。"></textarea>
+          <div class="button-row">
+            <button id="copy6" class="secondary-btn">复制报告</button>
+            <button id="share6" class="secondary-btn">分享</button>
+            <button id="txt6" class="secondary-btn">保存 TXT</button>
+          </div>
         </div>
-      </div>
-      <div class="btn-row"><button class="btn secondary" id="auto24">自动推荐</button><button class="btn primary" id="gen24">生成报告</button></div>
-      <div class="spacer"></div>
-      <textarea class="report" id="report24" readonly placeholder="生成后的 24 小时报告显示在这里"></textarea>
-      <div class="btn-row">
-        <button class="btn green" id="copy24" disabled>复制报告</button>
-        <button class="btn" id="share24" disabled>分享</button>
-        <button class="btn" id="txt24" disabled>保存 TXT</button>
-        <button class="btn secondary" id="xlsx24" disabled>导出 Excel 对比表</button>
-      </div>
-      <div class="helper">“相对于上一周期变化量”沿用桌面版定义：当前周期位移量 − 对比周期位移量。</div>
-    </div>
-  </section>
+      </section>
 
-  <section class="panel" id="pweek">
-    <div class="card">
-      <h2>2. 一周报告</h2>
-      <div class="period">
-        <h3>本周（7 天）</h3>
-        <div class="time-grid">
-          <div class="field"><label for="sw">开始时间</label><select id="sw"></select></div>
-          <div class="field"><label for="ew">结束时间</label><select id="ew"></select></div>
+      <section id="tab24h" class="tab-panel">
+        <div class="card">
+          <div class="section-title">② 24 小时报告</div>
+          <div class="hint">V4.2：日报正文仅输出当前 24 小时结果；下方对比周期仅用于导出 Excel 对比表。</div>
+          <div class="sub-title">当前周期</div>
+          <div class="time-grid">
+            <div><label>开始时间</label><select id="s24"></select></div>
+            <div><label>结束时间</label><select id="e24"></select></div>
+          </div>
+          <div class="sub-title">Excel 对比周期（仅用于对比表，不写入 24h 日报正文）</div>
+          <div class="time-grid">
+            <div><label>开始时间</label><select id="ps24"></select></div>
+            <div><label>结束时间</label><select id="pe24"></select></div>
+          </div>
+          <div class="button-row">
+            <button id="auto24" class="secondary-btn">自动推荐</button>
+            <button id="gen24" class="primary-btn">生成报告</button>
+          </div>
         </div>
-      </div>
-      <div class="period">
-        <h3>上周（对比 7 天）</h3>
-        <div class="time-grid">
-          <div class="field"><label for="psw">开始时间</label><select id="psw"></select></div>
-          <div class="field"><label for="pew">结束时间</label><select id="pew"></select></div>
+        <div class="card result-card">
+          <div class="result-head">
+            <span>报告结果</span>
+            <span id="meta24" class="meta"></span>
+          </div>
+          <textarea id="r24" class="report-text" readonly placeholder="生成后将在这里显示报告。"></textarea>
+          <div class="button-row">
+            <button id="copy24" class="secondary-btn">复制报告</button>
+            <button id="share24" class="secondary-btn">分享</button>
+            <button id="txt24" class="secondary-btn">保存 TXT</button>
+            <button id="xlsx24" class="secondary-btn">导出 Excel</button>
+          </div>
         </div>
-      </div>
-      <div class="btn-row"><button class="btn secondary" id="autoWeek">自动推荐</button><button class="btn primary" id="genWeek">生成报告</button></div>
-      <div class="spacer"></div>
-      <textarea class="report week-report" id="reportWeek" readonly placeholder="生成后的一周监测报告显示在这里"></textarea>
-      <div class="btn-row">
-        <button class="btn green" id="copyWeek" disabled>复制报告</button>
-        <button class="btn" id="shareWeek" disabled>分享</button>
-        <button class="btn" id="txtWeek" disabled>保存 TXT</button>
-        <button class="btn secondary" id="xlsxWeek" disabled>导出一周 Excel 对比表</button>
-      </div>
-      <div class="helper">自动推荐按“最新数据时刻向前 7 天”选择本周，再取紧邻的前 7 天作为上周；若历史数据不足 14 天，仍可生成本周报告，但不计算周环比。</div>
-    </div>
-  </section>
+      </section>
 
-  <div class="footer">建议首次打开时保持网络连接，使 Excel 组件完成加载。重新部署新版后若主屏幕仍显示旧界面，请先在 Safari 刷新网页一次。</div>
-</div>
-<div class="toast" id="toast"></div>
-<script src="./app.js?v=2.0.0"></script>
+      <section id="tab7d" class="tab-panel">
+        <div class="card">
+          <div class="section-title">② 周报</div>
+          <div class="sub-title">当前周期（7天）</div>
+          <div class="time-grid">
+            <div><label>开始时间</label><select id="s7"></select></div>
+            <div><label>结束时间</label><select id="e7"></select></div>
+          </div>
+          <div class="sub-title">对比周期（前一周）</div>
+          <div class="time-grid">
+            <div><label>开始时间</label><select id="ps7"></select></div>
+            <div><label>结束时间</label><select id="pe7"></select></div>
+          </div>
+          <div class="button-row">
+            <button id="auto7" class="secondary-btn">自动推荐（周五节点）</button>
+            <button id="gen7" class="primary-btn">生成报告</button>
+          </div>
+        </div>
+        <div class="card result-card">
+          <div class="result-head">
+            <span>报告结果</span>
+            <span id="meta7" class="meta"></span>
+          </div>
+          <textarea id="r7" class="report-text tall" readonly placeholder="生成后将在这里显示报告。"></textarea>
+          <div class="button-row">
+            <button id="copy7" class="secondary-btn">复制报告</button>
+            <button id="share7" class="secondary-btn">分享</button>
+            <button id="txt7" class="secondary-btn">保存 TXT</button>
+            <button id="xlsx7" class="secondary-btn">导出 Excel</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <footer>
+      <span>V4.2 · 本机浏览器处理</span>
+      <span id="swState"></span>
+    </footer>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="./app-v4.2.js"></script>
 </body>
 </html>

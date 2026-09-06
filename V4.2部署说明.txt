@@ -1,0 +1,8 @@
+V4.2 CLEAN 部署步骤
+1. 在 GitHub 仓库 radar-report-mobile 根目录，上传本文件夹内全部文件。
+2. index.html 必须选择 Replace/覆盖。
+3. 不必删除旧 app.js/styles.css/sw.js；V4.2 使用全新文件名，不会再引用旧文件。
+4. 等 Actions -> pages build and deployment 变绿色。
+5. 先直接查看 GitHub 仓库中的 index.html，搜索 V4.2；若仍是 V2，说明上传了错误的 index.html。
+6. Pages 地址后临时加 ?v=4.2 打开一次，例如 /radar-report-mobile/?v=4.2。
+7. Safari 刷新；若主屏幕仍旧，删除旧 Web App 后重新添加。
